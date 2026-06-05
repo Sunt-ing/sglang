@@ -210,6 +210,17 @@ class TestSamplingParamsVerify(CustomTestCase):
         """Test that a small positive repetition_penalty (e.g. 1e-3) is accepted."""
         self._make(repetition_penalty=1e-3).verify(self.VOCAB_SIZE)
 
+    # --- stop_token_ids ---
+    def test_stop_token_ids_out_of_vocab_raises(self):
+        """Test that verify() rejects stop_token_ids at or above vocab_size."""
+        sp = self._make(stop_token_ids=[self.VOCAB_SIZE + 100])
+        with self.assertRaises(ValueError):
+            sp.verify(self.VOCAB_SIZE)
+
+    def test_stop_token_ids_in_vocab_valid(self):
+        """Test that stop_token_ids inside the vocab is accepted."""
+        self._make(stop_token_ids=[self.VOCAB_SIZE - 1]).verify(self.VOCAB_SIZE)
+
     # --- min_new_tokens / max_new_tokens ---
     def test_negative_min_new_tokens_raises(self):
         """Test that verify() rejects negative min_new_tokens."""
