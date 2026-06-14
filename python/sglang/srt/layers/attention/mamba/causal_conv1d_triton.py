@@ -1199,3 +1199,42 @@ def causal_conv1d_update(
     if unsqueeze:
         out = out.squeeze(-1)
     return out
+
+
+def causal_conv1d_update_target_verify(
+    x: torch.Tensor,
+    conv_state: torch.Tensor,
+    weight: torch.Tensor,
+    bias: Optional[torch.Tensor] = None,
+    activation: Union[bool, str, None] = None,
+    *,
+    conv_state_indices: torch.Tensor,
+    intermediate_conv_window: torch.Tensor,
+    draft_token_num: int,
+    retrieve_next_token: Optional[torch.Tensor],
+    retrieve_next_sibling: Optional[torch.Tensor],
+) -> torch.Tensor:
+    """Run target-verify draft tokens through causal conv with intermediate state."""
+    conv_state_indices = conv_state_indices.to(torch.int32)
+    batch = conv_state_indices.shape[0]
+    intermediate_state_indices = torch.arange(batch, dtype=torch.int32, device=x.device)
+    retrieve_parent_token = (
+        torch.empty_like(retrieve_next_token)
+        if retrieve_next_token is not None
+        else None
+    )
+    x_reshaped = x.view(batch, draft_token_num, -1).transpose(1, 2)
+    out = causal_conv1d_update(
+        x_reshaped,
+        conv_state,
+        weight,
+        bias,
+        activation=activation,
+        conv_state_indices=conv_state_indices,
+        intermediate_conv_window=intermediate_conv_window,
+        intermediate_state_indices=intermediate_state_indices,
+        retrieve_next_token=retrieve_next_token,
+        retrieve_next_sibling=retrieve_next_sibling,
+        retrieve_parent_token=retrieve_parent_token,
+    )
+    return out.transpose(1, 2).view(x.shape[0], -1)

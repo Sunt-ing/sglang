@@ -24,6 +24,9 @@ from sglang.srt.layers.attention.mamba.causal_conv1d import (
     causal_conv1d_fn,
     causal_conv1d_update,
 )
+from sglang.srt.layers.attention.mamba.causal_conv1d_triton import (
+    causal_conv1d_update_target_verify,
+)
 from sglang.srt.layers.layernorm import RMSNorm
 from sglang.srt.layers.linear import (
     MergedColumnParallelLinear,
@@ -344,6 +347,21 @@ class Lfm2MoeShortConv(nn.Module):
                 self.conv_bias,
                 activation=None,
                 conv_state_indices=mamba_indices.to(torch.int32),
+            )
+        elif forward_batch.forward_mode.is_target_verify():
+            spec_info = forward_batch.spec_info
+            num_seqs = req_pool_indices.shape[0]
+            conv_out = causal_conv1d_update_target_verify(
+                Bx,
+                conv_state,
+                self.conv_weight,
+                self.conv_bias,
+                activation=None,
+                conv_state_indices=mamba_indices[:num_seqs],
+                intermediate_conv_window=layer_cache.intermediate_conv_window[0],
+                draft_token_num=spec_info.draft_token_num,
+                retrieve_next_token=spec_info.retrieve_next_token,
+                retrieve_next_sibling=spec_info.retrieve_next_sibling,
             )
         else:
             T = hidden_states.shape[0]
