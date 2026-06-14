@@ -14,6 +14,7 @@
 """Sampling parameters for text generation."""
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Union
 
 # sre_parse is deprecated in Python 3.11+, use re._parser instead
@@ -203,9 +204,14 @@ class SamplingParams:
 
             stop_regex_max_len = 0
             for stop_regex in self.stop_regex_strs:
-                stop_regex_max_len = max(
-                    stop_regex_max_len, get_max_seq_length(stop_regex)
-                )
+                try:
+                    regex_len = get_max_seq_length(stop_regex)
+                except re.error as e:
+                    # Invalid user-supplied stop_regex. Raise ValueError so the
+                    # admission layer returns HTTP 400 instead of letting re.error
+                    # escape as a 500.
+                    raise ValueError(f"Invalid stop_regex {stop_regex!r}: {e}") from e
+                stop_regex_max_len = max(stop_regex_max_len, regex_len)
 
             self.stop_regex_max_len = stop_regex_max_len
 

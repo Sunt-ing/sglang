@@ -333,6 +333,16 @@ class TestSamplingParamsNormalize(CustomTestCase):
         sp.normalize(tokenizer=None)
         self.assertEqual(sp.stop_regex_max_len, 3)
 
+    def test_invalid_stop_regex_raises_valueerror(self):
+        """An invalid stop_regex is rejected by normalize() as a ValueError.
+
+        The admission layer maps ValueError to HTTP 400; without this, the raw
+        re.error escapes as a 500.
+        """
+        sp = SamplingParams(stop_regex="(a")
+        with self.assertRaises(ValueError):
+            sp.normalize(tokenizer=None)
+
 
 class TestRegexMaxLength(CustomTestCase):
 
