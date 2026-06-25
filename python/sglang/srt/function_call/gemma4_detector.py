@@ -234,6 +234,24 @@ def _find_matching_brace(text: str) -> int:
     return (i - 1) if depth == 0 else -1
 
 
+def _find_tool_call_end(text: str, start: int) -> int:
+    i = start
+    n = len(text)
+    delim_len = len(STRING_DELIM)
+    while i < n:
+        if text[i : i + delim_len] == STRING_DELIM:
+            i += delim_len
+            next_delim = text.find(STRING_DELIM, i)
+            if next_delim == -1:
+                return -1
+            i = next_delim + delim_len
+            continue
+        if text.startswith(TOOL_CALL_END, i):
+            return i
+        i += 1
+    return -1
+
+
 class Gemma4Detector(BaseFormatDetector):
     def __init__(self):
         super().__init__()
@@ -255,7 +273,7 @@ class Gemma4Detector(BaseFormatDetector):
             start = text.find(TOOL_CALL_START, search_from)
             if start == -1:
                 break
-            end = text.find(TOOL_CALL_END, start)
+            end = _find_tool_call_end(text, start + len(TOOL_CALL_START))
             if end == -1:
                 break
             inner = text[start + len(TOOL_CALL_START) : end]

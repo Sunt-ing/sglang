@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 from typing import List
 
 from sglang.srt.entrypoints.openai.protocol import Tool
@@ -64,6 +63,27 @@ class InternlmDetector(BaseFormatDetector):
             return obj.get("arguments")
         return None
 
+    def _iter_tool_call_json(self, text: str):
+        cursor = 0
+        while True:
+            start = text.find(self.bot_token, cursor)
+            if start == -1:
+                break
+            body_start = start + len(self.bot_token)
+            search_from = body_start
+            while True:
+                end = text.find(self.eot_token, search_from)
+                if end == -1:
+                    return
+                body = text[body_start:end].strip()
+                try:
+                    json.loads(body)
+                    yield body
+                    cursor = end + len(self.eot_token)
+                    break
+                except json.JSONDecodeError:
+                    search_from = end + len(self.eot_token)
+
     def detect_and_parse(self, text: str, tools: List[Tool]) -> StreamingParseResult:
         """
         One-time parsing: Detects and parses tool calls in the provided text.
@@ -83,12 +103,7 @@ class InternlmDetector(BaseFormatDetector):
             logger.warning("[InternLM Tool Call] No tool call markers found in text")
             return StreamingParseResult(normal_text=normal_text, calls=[])
 
-        # Use regex to find all tool call blocks
-        # Pattern matches: {self.bot_token}{...}{self.eot_token}
-        tool_call_pattern = (
-            rf"{re.escape(self.bot_token)}\s*(.*?){re.escape(self.eot_token)}"
-        )
-        matches = re.findall(tool_call_pattern, text, re.DOTALL)
+        matches = list(self._iter_tool_call_json(text))
 
         if not matches:
             logger.warning("[InternLM Tool Call] No complete tool call blocks found")
@@ -186,7 +201,19 @@ class InternlmDetector(BaseFormatDetector):
                 return StreamingParseResult()
 
         # Check if we have a complete tool call (with end marker)
-        end = current_text.find(self.eot_token)
+        end = -1
+        body_start = start + len(self.bot_token)
+        search_from = body_start
+        while True:
+            candidate = current_text.find(self.eot_token, search_from)
+            if candidate == -1:
+                break
+            try:
+                json.loads(current_text[body_start:candidate].strip())
+                end = candidate
+                break
+            except json.JSONDecodeError:
+                search_from = candidate + len(self.eot_token)
         if end != -1:
             # We have a complete tool call
             # Initialize state if this is the first tool call

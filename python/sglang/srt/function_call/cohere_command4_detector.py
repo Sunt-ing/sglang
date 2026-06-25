@@ -32,6 +32,28 @@ class CohereCommand4Detector(BaseFormatDetector):
     def has_tool_call(self, text: str) -> bool:
         return self.bot_token in text
 
+    def _parse_body(self, body: str):
+        try:
+            return orjson.loads(body)
+        except (orjson.JSONDecodeError, TypeError, ValueError):
+            try:
+                return _partial_json_loads(body, Allow.ALL)[0]
+            except (MalformedJSON, json.JSONDecodeError, ValueError):
+                return None
+
+    def _find_eot_after_json(self, text: str, start: int) -> int:
+        search_from = start
+        while True:
+            eot_idx = text.find(self.eot_token, search_from)
+            if eot_idx == -1:
+                return -1
+            try:
+                orjson.loads(text[start:eot_idx])
+                return eot_idx
+            except (orjson.JSONDecodeError, TypeError, ValueError):
+                pass
+            search_from = eot_idx + len(self.eot_token)
+
     @staticmethod
     def _normalize_calls(arr) -> List[dict]:
         """Translate Cohere's per-item shape ``{tool_call_id, tool_name,
@@ -60,25 +82,20 @@ class CohereCommand4Detector(BaseFormatDetector):
             return StreamingParseResult(normal_text=text)
         normal_text = text[:idx]
         body_start = idx + len(self.bot_token)
-        eot_idx = text.find(self.eot_token, body_start)
+        eot_idx = self._find_eot_after_json(text, body_start)
         body = text[body_start:eot_idx] if eot_idx != -1 else text[body_start:]
 
         # body should be ``[ {...}, {...} ]`` (with arbitrary whitespace).
         # Prefer the full-text JSON parser when the block is complete; fall
         # back to ``_partial_json_loads`` to be forgiving when generation was
         # truncated before ``<|END_ACTION|>``.
-        arr = None
-        try:
-            arr = orjson.loads(body)
-        except (orjson.JSONDecodeError, TypeError, ValueError):
-            try:
-                arr, _ = _partial_json_loads(body, Allow.ALL)
-            except (MalformedJSON, json.JSONDecodeError, ValueError) as e:
-                logger.warning(
-                    f"Cohere tool-call body did not parse as JSON: {e}; "
-                    "returning surrounding text as normal output."
-                )
-                return StreamingParseResult(normal_text=normal_text)
+        arr = self._parse_body(body)
+        if arr is None:
+            logger.warning(
+                "Cohere tool-call body did not parse as JSON; "
+                "returning surrounding text as normal output."
+            )
+            return StreamingParseResult(normal_text=normal_text)
 
         normalized = self._normalize_calls(arr)
         return StreamingParseResult(
@@ -121,7 +138,7 @@ class CohereCommand4Detector(BaseFormatDetector):
         # parse and emit the full call list. Anything past <|END_ACTION|>
         # (typically <|END_OF_TURN_TOKEN|>) stays in the buffer for the next
         # increment to handle.
-        eot_pos = current.find(self.eot_token, len(self.bot_token))
+        eot_pos = self._find_eot_after_json(current, len(self.bot_token))
         if eot_pos == -1:
             return StreamingParseResult()
 

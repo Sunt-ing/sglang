@@ -20,7 +20,6 @@ Also supports JSON format:
 import ast
 import json
 import logging
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from sglang.srt.entrypoints.openai.protocol import Tool
@@ -273,20 +272,53 @@ class Lfm2Detector(BaseFormatDetector):
         if self.bot_token not in text:
             return StreamingParseResult(normal_text=normal_text, calls=[])
 
-        # Find all <|tool_call_start|>...<|tool_call_end|> blocks
-        pattern = rf"{re.escape(self.bot_token)}(.*?){re.escape(self.eot_token)}"
-        match_result_list = re.findall(pattern, text, re.DOTALL)
-
         calls = []
-        for match_result in match_result_list:
-            parsed_calls = self._parse_tool_calls_content(match_result, tools)
+        cursor = 0
+        while True:
+            start = text.find(self.bot_token, cursor)
+            if start == -1:
+                break
+            content_start = start + len(self.bot_token)
+            end = self._find_eot_outside_python_strings(text, content_start)
+            if end == -1:
+                break
+            parsed_calls = self._parse_tool_calls_content(
+                text[content_start:end], tools
+            )
             calls.extend(parsed_calls)
+            cursor = end + len(self.eot_token)
 
         return StreamingParseResult(normal_text=normal_text, calls=calls)
 
     def _strip_special_tokens(self, text: str) -> str:
         """Remove special tokens from text."""
         return text.replace(self.bot_token, "").replace(self.eot_token, "")
+
+    def _find_eot_outside_python_strings(self, text: str, start: int) -> int:
+        quote = None
+        escaped = False
+        i = start
+        while i < len(text):
+            ch = text[i]
+            if escaped:
+                escaped = False
+                i += 1
+                continue
+            if quote is not None:
+                if ch == "\\":
+                    escaped = True
+                elif ch == quote:
+                    quote = None
+                i += 1
+                continue
+            if ch in ('"', "'"):
+                quote = ch
+                i += 1
+                continue
+            if text.startswith(self.eot_token, i):
+                return i
+            i += 1
+        return -1
 
     def parse_streaming_increment(
         self, new_text: str, tools: List[Tool]
@@ -327,7 +359,9 @@ class Lfm2Detector(BaseFormatDetector):
         normal_text_before = self._buffer[:bot_pos] if bot_pos > 0 else ""
 
         # Look for the end token
-        eot_pos = self._buffer.find(self.eot_token, bot_pos + len(self.bot_token))
+        eot_pos = self._find_eot_outside_python_strings(
+            self._buffer, bot_pos + len(self.bot_token)
+        )
 
         if eot_pos == -1:
             # No end token yet - check if we might have a partial one

@@ -8,9 +8,11 @@ from sglang.srt.entrypoints.openai.protocol import (
     ToolChoiceFuncName,
 )
 from sglang.srt.function_call.base_format_detector import BaseFormatDetector
+from sglang.srt.function_call.cohere_command4_detector import CohereCommand4Detector
 from sglang.srt.function_call.core_types import StreamingParseResult
 from sglang.srt.function_call.deepseekv3_detector import DeepSeekV3Detector
 from sglang.srt.function_call.deepseekv4_detector import DeepSeekV4Detector
+from sglang.srt.function_call.deepseekv31_detector import DeepSeekV31Detector
 from sglang.srt.function_call.deepseekv32_detector import DeepSeekV32Detector
 from sglang.srt.function_call.gemma4_detector import (
     Gemma4Detector,
@@ -22,10 +24,12 @@ from sglang.srt.function_call.gigachat3_detector import GigaChat3Detector
 from sglang.srt.function_call.glm4_moe_detector import Glm4MoeDetector
 from sglang.srt.function_call.glm47_moe_detector import Glm47MoeDetector
 from sglang.srt.function_call.gpt_oss_detector import GptOssDetector
+from sglang.srt.function_call.internlm_detector import InternlmDetector
 from sglang.srt.function_call.json_array_parser import JsonArrayParser
 from sglang.srt.function_call.kimik2_detector import KimiK2Detector
 from sglang.srt.function_call.lfm2_detector import Lfm2Detector
 from sglang.srt.function_call.llama32_detector import Llama32Detector
+from sglang.srt.function_call.minicpm5_detector import MiniCPM5Detector
 from sglang.srt.function_call.mistral_detector import MistralDetector
 from sglang.srt.function_call.pythonic_detector import PythonicDetector
 from sglang.srt.function_call.qwen3_coder_detector import Qwen3CoderDetector
@@ -5370,6 +5374,102 @@ class TestGemma4Detector(unittest.TestCase):
         params1 = json.loads(tool_calls_by_index[1]["parameters"])
         self.assertEqual(params0["location"], "Paris")
         self.assertEqual(params1["timezone"], "UTC")
+
+
+def _string_marker_tools():
+    return [
+        Tool(
+            function=Function(
+                name="apply_diff",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "old_string": {"type": "string"},
+                        "new_string": {"type": "string"},
+                    },
+                },
+            )
+        )
+    ]
+
+
+# (label, detector class, text, json-arg key, marker that must survive in the value)
+_STRING_MARKER_CASES = [
+    (
+        "gemma4",
+        Gemma4Detector,
+        '<|tool_call>call:apply_diff{old_string:<|"|>hello <tool_call|> inside<|"|>, '
+        'new_string:<|"|>x<|"|>}<tool_call|>',
+        "old_string",
+        "<tool_call|>",
+    ),
+    (
+        "lfm2",
+        Lfm2Detector,
+        '<|tool_call_start|>[apply_diff(text="hello <|tool_call_end|> inside")]'
+        "<|tool_call_end|>",
+        "text",
+        "<|tool_call_end|>",
+    ),
+    (
+        "minicpm5",
+        MiniCPM5Detector,
+        '<function name="apply_diff"><param name="text">'
+        "<![CDATA[hello </function> inside]]></param></function>",
+        "text",
+        "</function>",
+    ),
+    (
+        "deepseekv3",
+        DeepSeekV3Detector,
+        "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>apply_diff\n"
+        '```json\n{"text": "hello <｜tool▁call▁end｜> inside"}\n```'
+        "<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+        "text",
+        "<｜tool▁call▁end｜>",
+    ),
+    (
+        "deepseekv31",
+        DeepSeekV31Detector,
+        "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>apply_diff<｜tool▁sep｜>"
+        '{"text": "hello <｜tool▁call▁end｜> inside"}'
+        "<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
+        "text",
+        "<｜tool▁call▁end｜>",
+    ),
+    (
+        "cohere",
+        CohereCommand4Detector,
+        '<|START_ACTION|>[{"tool_call_id": "0", "tool_name": "apply_diff", '
+        '"parameters": {"text": "hello <|END_ACTION|> inside"}}]<|END_ACTION|>',
+        "text",
+        "<|END_ACTION|>",
+    ),
+    (
+        "internlm",
+        InternlmDetector,
+        "<|action_start|> <|plugin|>\n"
+        '{"name": "apply_diff", "parameters": {"text": "hello <|action_end|> inside"}}'
+        "<|action_end|>",
+        "text",
+        "<|action_end|>",
+    ),
+]
+
+
+class TestStringInternalEndMarkers(unittest.TestCase):
+    def test_marker_inside_literal_is_not_a_boundary(self):
+        for label, detector_cls, text, key, marker in _STRING_MARKER_CASES:
+            with self.subTest(parser=label):
+                result = detector_cls().detect_and_parse(text, _string_marker_tools())
+                self.assertEqual(
+                    len(result.calls), 1, f"{label}: expected exactly one tool call"
+                )
+                args = json.loads(result.calls[0].parameters)
+                self.assertIn(
+                    marker, args[key], f"{label}: argument was truncated at the marker"
+                )
 
 
 if __name__ == "__main__":

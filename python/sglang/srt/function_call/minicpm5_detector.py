@@ -71,6 +71,20 @@ class MiniCPM5Detector(BaseFormatDetector):
         """Check if the text contains a MiniCPM-4 V3 XML-styled tool call."""
         return self.bot_token in text
 
+    def _find_eot_outside_cdata(self, text: str, start: int = 0) -> int:
+        pos = start
+        while True:
+            end = text.find(self.eot_token, pos)
+            if end == -1:
+                return -1
+            cdata_start = text.find("<![CDATA[", pos)
+            if cdata_start == -1 or end < cdata_start:
+                return end
+            cdata_end = text.find("]]>", cdata_start + len("<![CDATA["))
+            if cdata_end == -1:
+                return -1
+            pos = cdata_end + len("]]>")
+
     def detect_and_parse(self, text: str, tools: List[Tool]) -> StreamingParseResult:
         idx = text.find(self.bot_token)
         if idx == -1:
@@ -96,11 +110,19 @@ class MiniCPM5Detector(BaseFormatDetector):
 
         try:
             last_end = 0
-            for m in re.finditer(self.func_call_regex, text, re.DOTALL):
-                if m.start() > last_end:
-                    normal_parts.append(text[last_end : m.start()])
+            cursor = 0
+            while True:
+                start = text.find(self.bot_token, cursor)
+                if start == -1:
+                    break
 
-                block = m.group(0)
+                end = self._find_eot_outside_cdata(text, start + len(self.bot_token))
+                if end == -1:
+                    break
+                if start > last_end:
+                    normal_parts.append(text[last_end:start])
+
+                block = text[start : end + len(self.eot_token)]
                 func_name = None
                 arguments = {}
                 parsed_ok = False
@@ -227,7 +249,8 @@ class MiniCPM5Detector(BaseFormatDetector):
                 else:
                     normal_parts.append(block)
 
-                last_end = m.end()
+                last_end = end + len(self.eot_token)
+                cursor = last_end
 
             if last_end < len(text):
                 normal_parts.append(text[last_end:])
@@ -285,7 +308,7 @@ class MiniCPM5Detector(BaseFormatDetector):
                 normal_parts.append(current_text[:start])
                 current_text = current_text[start:]
 
-            end = current_text.find(self.eot_token)
+            end = self._find_eot_outside_cdata(current_text, len(self.bot_token))
             if end == -1:
                 self._buffer = current_text
                 break

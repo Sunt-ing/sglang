@@ -55,6 +55,30 @@ class DeepSeekV3Detector(BaseFormatDetector):
         """Check if the text contains a deepseek format tool call."""
         return self.bot_token in text
 
+    def _iter_tool_call_blocks(self, text: str):
+        cursor = 0
+        while True:
+            start = text.find("<｜tool▁call▁begin｜>", cursor)
+            if start == -1:
+                break
+            search_from = start + len("<｜tool▁call▁begin｜>")
+            while True:
+                end = text.find("<｜tool▁call▁end｜>", search_from)
+                if end == -1:
+                    return
+                block_end = end + len("<｜tool▁call▁end｜>")
+                block = text[start:block_end]
+                func_detail = re.search(self.func_detail_regex, block, re.DOTALL)
+                if func_detail is not None:
+                    try:
+                        json.loads(func_detail.group(3))
+                        yield block
+                        cursor = block_end
+                        break
+                    except json.JSONDecodeError:
+                        pass
+                search_from = block_end
+
     def detect_and_parse(self, text: str, tools: List[Tool]) -> StreamingParseResult:
         """
         One-time parsing: Detects and parses tool calls in the provided text.
@@ -67,10 +91,9 @@ class DeepSeekV3Detector(BaseFormatDetector):
         normal_text = text[:idx].strip() if idx != -1 else text
         if self.bot_token not in text:
             return StreamingParseResult(normal_text=normal_text, calls=[])
-        match_result_list = re.findall(self.func_call_regex, text, re.DOTALL)
         calls = []
         try:
-            for match_result in match_result_list:
+            for match_result in self._iter_tool_call_blocks(text):
                 # Get function name
                 func_detail = re.search(self.func_detail_regex, match_result, re.DOTALL)
                 func_name = func_detail.group(2)
