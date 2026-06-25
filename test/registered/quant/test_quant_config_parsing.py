@@ -2,6 +2,9 @@ import unittest
 from unittest.mock import MagicMock
 
 from sglang.srt.configs.model_config import ModelConfig
+from sglang.srt.layers.quantization.compressed_tensors.compressed_tensors import (
+    CompressedTensorsConfig,
+)
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
@@ -71,6 +74,39 @@ class TestQuantLogString(CustomTestCase):
         result = model_config.get_quantization_config_log_str()
         print(f"\n[Test No Quant] Result: {result}")
         self.assertIsNone(result)
+
+
+class TestSupportsCutlass24(CustomTestCase):
+    @staticmethod
+    def _scheme(fmt, structure="2:4"):
+        scheme = MagicMock()
+        scheme.sparsity_structure = structure
+        scheme.format = fmt
+        return scheme
+
+    def test_current_2of4_sparse_formats_are_recognized(self):
+        # These formats must reach the existing 2:4 reject path instead of
+        # silently loading as dense and dropping sparse packed weights.
+        for fmt in ("sparse-bitmask", "sparse-24"):
+            with self.subTest(format=fmt):
+                self.assertTrue(
+                    CompressedTensorsConfig.supports_cutlass_24(
+                        weight_quant=None,
+                        input_quant=None,
+                        sparsity_scheme=self._scheme(fmt),
+                    )
+                )
+
+    def test_non_2of4_structure_not_recognized(self):
+        self.assertFalse(
+            CompressedTensorsConfig.supports_cutlass_24(
+                weight_quant=None,
+                input_quant=None,
+                sparsity_scheme=self._scheme(
+                    "sparse-bitmask", structure="unstructured"
+                ),
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -879,7 +879,13 @@ class CompressedTensorsConfig(QuantizationConfig):
 
         valid_compressors = {
             CompressionFormat.dense.value,
+            CompressionFormat.sparse_bitmask.value,
             CompressionFormat.sparse_24_bitmask.value,
+            # Current compressed-tensors checkpoints emit "sparse-24", which is
+            # not a CompressionFormat enum member; match it as a literal so the
+            # 2:4 path is taken (and explicitly rejected) instead of silently
+            # dropping the sparse packed weights.
+            "sparse-24",
         }
 
         is_valid_sparsity = (
