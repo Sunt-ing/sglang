@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from sglang.srt.configs.model_config import ModelConfig
+from sglang.srt.layers.quantization.awq.awq import AWQConfig
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
@@ -71,6 +72,22 @@ class TestQuantLogString(CustomTestCase):
         result = model_config.get_quantization_config_log_str()
         print(f"\n[Test No Quant] Result: {result}")
         self.assertIsNone(result)
+
+
+class TestAWQGemvUnsupported(CustomTestCase):
+    def test_from_config_rejects_gemv(self):
+        # GEMV uses a different packed layout SGLang does not implement; without
+        # this guard it loaded as GEMM and crashed during QKV weight loading.
+        with self.assertRaisesRegex(ValueError, "GEMV"):
+            AWQConfig.from_config(
+                {"bits": 4, "group_size": 128, "zero_point": True, "version": "gemv"}
+            )
+
+    def test_from_config_accepts_gemm(self):
+        cfg = AWQConfig.from_config(
+            {"bits": 4, "group_size": 128, "zero_point": True, "version": "gemm"}
+        )
+        self.assertIsInstance(cfg, AWQConfig)
 
 
 if __name__ == "__main__":

@@ -124,6 +124,11 @@ class AWQConfig(QuantizationConfig):
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> AWQConfig:
+        version = cls.get_from_keys_or(config, ["version"], None)
+        if version is not None and version.lower() == "gemv":
+            raise ValueError(
+                "AWQ GEMV checkpoints are not supported. Use GEMM AWQ checkpoints."
+            )
         weight_bits = cls.get_from_keys(config, ["w_bit", "bits"])
         group_size = cls.get_from_keys(config, ["q_group_size", "group_size"])
         zero_point = cls.get_from_keys(config, ["zero_point"])
@@ -374,6 +379,10 @@ class AWQMarlinConfig(QuantizationConfig):
         num_bits = quant_config.get("bits")
         group_size = quant_config.get("group_size")
         zero_point = quant_config.get("zero_point")
+
+        version = quant_config.get("version")
+        if version is not None and version.lower() == "gemv":
+            return False
 
         if not _is_cuda:
             return False
