@@ -137,6 +137,7 @@ class BaseReasoningFormatDetector:
         # Strip `<think>` token if present
         if not self.stripped_think_start and think_start_text in current_text:
             current_text = current_text.replace(think_start_text, "", 1)
+            self._buffer = current_text
             self.stripped_think_start = True
             self._in_reasoning = True
 
@@ -168,6 +169,17 @@ class BaseReasoningFormatDetector:
                     normal_text=normal_text, reasoning_text=reasoning_text
                 )
             if self.stream_reasoning:
+                # A later chunk can end with a partial structural token (e.g. a
+                # split `</think>` or tool-start token). Hold that suffix back so
+                # the next chunk can complete the token instead of leaking it.
+                hold_len = 0
+                for token in tokens_to_check:
+                    for suffix_len in range(1, min(len(current_text), len(token))):
+                        if token.startswith(current_text[-suffix_len:]):
+                            hold_len = max(hold_len, suffix_len)
+                if hold_len:
+                    self._buffer = current_text[-hold_len:]
+                    return StreamingParseResult(reasoning_text=current_text[:-hold_len])
                 # Stream the content immediately
                 self._buffer = ""
                 return StreamingParseResult(reasoning_text=current_text)
@@ -486,7 +498,7 @@ class Nemotron3Detector(BaseReasoningFormatDetector):
             "<think>",
             "</think>",
             force_reasoning=force_reasoning,
-            stream_reasoning=stream_reasoning,
+            stream_reasoning=(False if force_nonempty_content else stream_reasoning),
             continue_final_message=continue_final_message,
             previous_content=previous_content,
             reasoning_default="enable_thinking",
@@ -496,6 +508,17 @@ class Nemotron3Detector(BaseReasoningFormatDetector):
     def detect_and_parse(self, text: str) -> StreamingParseResult:
         ret = super().detect_and_parse(text)
         if self._force_nonempty_content and not ret.normal_text:
+            ret.normal_text, ret.reasoning_text = ret.reasoning_text, ret.normal_text
+        return ret
+
+    def parse_streaming_increment(self, new_text: str) -> StreamingParseResult:
+        ret = super().parse_streaming_increment(new_text)
+        if (
+            self._force_nonempty_content
+            and not self._in_reasoning
+            and ret.reasoning_text
+            and not ret.normal_text
+        ):
             ret.normal_text, ret.reasoning_text = ret.reasoning_text, ret.normal_text
         return ret
 
@@ -998,6 +1021,15 @@ class CohereCommand4Detector(BaseReasoningFormatDetector):
                 # the buffer for the post-thinking branch below to consume.
                 self._buffer = buf[first_pos:]
             self._reasoning_done = True
+            if reasoning_chunk and self._buffer:
+                # The same delta already carries the post-thinking text/action
+                # block. Consume it now (the caller will not flush us with an
+                # empty chunk), so the final text or tool action is not lost.
+                tail_result = self.parse_streaming_increment("")
+                return StreamingParseResult(
+                    normal_text=tail_result.normal_text,
+                    reasoning_text=reasoning_chunk + tail_result.reasoning_text,
+                )
             if reasoning_chunk:
                 return StreamingParseResult(reasoning_text=reasoning_chunk)
             buf = self._buffer

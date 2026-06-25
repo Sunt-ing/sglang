@@ -4,6 +4,7 @@ import unittest
 
 from sglang.srt.parser.reasoning_parser import (
     BaseReasoningFormatDetector,
+    CohereCommand4Detector,
     DeepSeekR1Detector,
     Gemma4Detector,
     Glm45Detector,
@@ -155,6 +156,33 @@ class TestBaseReasoningFormatDetector(CustomTestCase):
         )
         self.assertEqual(result.reasoning_text, "reasoning")
         self.assertEqual(result.normal_text, "normal")
+
+    @staticmethod
+    def _stream(detector, chunks):
+        normal, reasoning = "", ""
+        for chunk in chunks:
+            result = detector.parse_streaming_increment(chunk)
+            normal += result.normal_text
+            reasoning += result.reasoning_text
+        return normal, reasoning
+
+    def test_streaming_no_stream_reasoning_strips_think_start(self):
+        """stream_reasoning=False must not leak the <think> start tag into the
+        reasoning flushed at the end token."""
+        detector = BaseReasoningFormatDetector(
+            "<think>", "</think>", stream_reasoning=False
+        )
+        normal, reasoning = self._stream(detector, ["<think>", "abc", "</think>def"])
+        self.assertEqual(reasoning, "abc")
+        self.assertEqual(normal, "def")
+
+    def test_streaming_holds_split_end_token_suffix(self):
+        """A </think> split across chunks must not leak into reasoning; the
+        normal tail must still be emitted, matching non-streaming."""
+        detector = BaseReasoningFormatDetector("<think>", "</think>")
+        normal, reasoning = self._stream(detector, ["<think>", "abc</thi", "nk>answer"])
+        self.assertEqual(reasoning, "abc")
+        self.assertEqual(normal, "answer")
 
 
 class TestDeepSeekR1Detector(CustomTestCase):
@@ -475,6 +503,32 @@ class TestGlm45Detector(CustomTestCase):
         self.assertEqual(result3.reasoning_text, "")
         self.assertEqual(result3.normal_text, "tool args")
 
+    def test_streaming_holds_split_tool_start_after_reasoning(self):
+        """A <tool_call> tool-start token split across chunks after reasoning
+        content must not leak into reasoning; the tool call must still surface as
+        normal text, matching non-streaming parsing."""
+        normal, reasoning = "", ""
+        for chunk in ["<think>", "abc<tool", "_call>{}</tool_call>"]:
+            result = self.detector.parse_streaming_increment(chunk)
+            normal += result.normal_text
+            reasoning += result.reasoning_text
+        self.assertEqual(reasoning, "abc")
+        self.assertEqual(normal, "<tool_call>{}</tool_call>")
+        self.assertFalse(self.detector._in_reasoning)
+
+    def test_streaming_holds_split_tool_start_after_reasoning(self):
+        """A <tool_call> tool-start token split across chunks after reasoning
+        content must not leak into reasoning; the tool call must still surface as
+        normal text, matching non-streaming parsing."""
+        normal, reasoning = "", ""
+        for chunk in ["<think>", "abc<tool", "_call>{}</tool_call>"]:
+            result = self.detector.parse_streaming_increment(chunk)
+            normal += result.normal_text
+            reasoning += result.reasoning_text
+        self.assertEqual(reasoning, "abc")
+        self.assertEqual(normal, "<tool_call>{}</tool_call>")
+        self.assertFalse(self.detector._in_reasoning)
+
     def test_streaming_no_stream_reasoning(self):
         """Test streaming without stream_reasoning enabled."""
         detector = Glm45Detector(stream_reasoning=False)
@@ -488,12 +542,10 @@ class TestGlm45Detector(CustomTestCase):
         self.assertEqual(result.normal_text, "")
 
         # Tool interruption should still work - flushes buffered reasoning.
-        # Note: when stream_reasoning=False, the <think> tag is stripped from the
-        # local `current_text` variable but NOT from `self._buffer` (which is never
-        # cleared in the non-streaming path). So the flushed reasoning content
-        # includes the raw <think> tag.
+        # The <think> start tag is stripped from the buffered reasoning, so the
+        # flushed reasoning_text matches non-streaming parsing.
         result = detector.parse_streaming_increment("<tool_call>tool call")
-        self.assertEqual(result.reasoning_text, "<think>thinking")
+        self.assertEqual(result.reasoning_text, "thinking")
         self.assertEqual(result.normal_text, "<tool_call>tool call")
 
     def test_streaming_empty_reasoning_with_tool(self):
@@ -1544,6 +1596,44 @@ class TestPoolsideV1Registered(CustomTestCase):
         rp = ReasoningParser("poolside_v1", stream_reasoning=True)
         self.assertEqual(rp.detector.reasoning_default, "explicit_enable_thinking")
         self.assertTrue(rp.detector.thinks_internally)
+
+
+class TestCohereCommand4Detector(CustomTestCase):
+    """CohereCommand4Detector must not drop the post-thinking text/action block
+    when the whole generation arrives as a single streaming delta."""
+
+    def test_streaming_whole_delta_recovers_text_tail(self):
+        detector = CohereCommand4Detector()
+        result = detector.parse_streaming_increment(
+            "thinking<|END_THINKING|><|START_TEXT|>answer<|END_TEXT|>"
+        )
+        self.assertEqual(result.reasoning_text, "thinking")
+        self.assertEqual(result.normal_text, "answer")
+
+    def test_streaming_whole_delta_recovers_action_tail(self):
+        detector = CohereCommand4Detector()
+        action = '<|START_ACTION|>[{"tool_name":"x"}]<|END_ACTION|>'
+        result = detector.parse_streaming_increment("thinking<|END_THINKING|>" + action)
+        self.assertEqual(result.reasoning_text, "thinking")
+        self.assertEqual(result.normal_text, action)
+
+
+class TestNemotron3DetectorStreaming(CustomTestCase):
+    """force_nonempty_content must promote reasoning-only output to normal text on
+    the streaming path too, matching non-streaming detect_and_parse."""
+
+    def test_streaming_promotes_reasoning_only_output(self):
+        detector = Nemotron3Detector(force_nonempty_content=True)
+        result = detector.parse_streaming_increment("<think>abc</think>")
+        self.assertEqual(result.normal_text, "abc")
+        self.assertEqual(result.reasoning_text, "")
+
+    def test_streaming_keeps_normal_tail_unchanged(self):
+        # Negative control: real normal content after reasoning is not promoted.
+        detector = Nemotron3Detector(force_nonempty_content=True)
+        result = detector.parse_streaming_increment("<think>abc</think>answer")
+        self.assertEqual(result.normal_text, "answer")
+        self.assertEqual(result.reasoning_text, "abc")
 
 
 if __name__ == "__main__":
