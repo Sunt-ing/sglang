@@ -582,6 +582,11 @@ class TokenizerManagerScoreMixin:
                 "embed_override_token_id is required when query_embed_overrides "
                 "or item_embed_overrides are supplied."
             )
+        if has_embeds and query is None:
+            raise ValueError(
+                "query is required when query_embed_overrides or "
+                "item_embed_overrides are supplied."
+            )
         if item_first and has_embeds:
             raise ValueError("item_first is not supported when embeddings are supplied")
         if item_embed_overrides is not None and len(item_embed_overrides) != len(items):

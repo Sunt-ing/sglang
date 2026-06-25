@@ -598,6 +598,26 @@ class TestScoreRequestValidation(CustomTestCase):
                 item_embed_overrides=[[_vec(1)]],  # 1 override for 2 items
             )
 
+    def test_query_none_with_query_embeds_raises(self):
+        with self.assertRaisesRegex(ValueError, "query is required"):
+            self._call(
+                query=None,
+                items=[[3, 4]],
+                label_token_ids=[100],
+                embed_override_token_id=50,
+                query_embed_overrides=[_vec(1)],
+            )
+
+    def test_query_none_with_item_embeds_raises(self):
+        with self.assertRaisesRegex(ValueError, "query is required"):
+            self._call(
+                query=None,
+                items=[[3, 4]],
+                label_token_ids=[100],
+                embed_override_token_id=50,
+                item_embed_overrides=[[_vec(1)]],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
