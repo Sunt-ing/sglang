@@ -155,7 +155,7 @@ class OpenAIServingBase(ABC):
             value = getattr(request, key, None)
             if value:
                 if not isinstance(value, str):
-                    raise TypeError(
+                    raise ValueError(
                         f"Value of {key} must be a string, but got {type(value).__name__}"
                     )
                 parts.append(value)

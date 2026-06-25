@@ -378,6 +378,19 @@ class ServingCompletionTestCase(unittest.TestCase):
             },
         )
 
+    def test_extra_key_list_value_rejected_as_client_error(self):
+        # extra_key / cache_salt accept only scalar strings here; a list value
+        # (currently unsupported) must be a client error, not a 500 TypeError.
+        for field in ("extra_key", "cache_salt"):
+            req = CompletionRequest(model="x", prompt="a", **{field: ["a"]})
+            with self.assertRaises(ValueError):
+                self.sc._compute_extra_key(req)
+
+    def test_scalar_extra_key_and_cache_salt_ok(self):
+        # Negative control: scalar values still compute the concatenated key.
+        req = CompletionRequest(model="x", prompt="a", cache_salt="s", extra_key="k")
+        self.assertEqual(self.sc._compute_extra_key(req), "sk")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
