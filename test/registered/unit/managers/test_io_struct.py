@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from sglang.srt.managers.io_struct import GenerateReqInput
+from sglang.srt.managers.io_struct import EmbeddingReqInput, GenerateReqInput
 from sglang.test.ci.ci_register import (
     register_amd_ci,
     register_cpu_ci,
@@ -644,6 +644,55 @@ class TestGenerateReqInputNormalization(CustomTestCase):
         req = GenerateReqInput(input_embeds=[[0.1, 0.2]])
         req.normalize_batch_and_arguments()
         self.assertTrue(req.is_single)
+
+    def test_batch_list_fields_reject_length_mismatch(self):
+        """Per-request list fields shorter than the batch must raise, not crash in __getitem__."""
+        for field, value in [
+            ("lora_path", ["only_one"]),
+            ("bootstrap_host", ["h1"]),
+            ("bootstrap_port", [1]),
+            ("bootstrap_room", [1]),
+            ("bootstrap_pair_key", ["k1"]),
+        ]:
+            req = GenerateReqInput(text=["Hello", "World"], **{field: value})
+            with self.assertRaises(ValueError):
+                req.normalize_batch_and_arguments()
+
+        # Correctly sized lists still normalize.
+        req = GenerateReqInput(
+            text=["Hello", "World"],
+            bootstrap_host=["h1", "h2"],
+            bootstrap_port=[1, 2],
+            bootstrap_room=[10, 20],
+            bootstrap_pair_key=["k1", "k2"],
+        )
+        req.normalize_batch_and_arguments()
+        self.assertEqual(req.bootstrap_host, ["h1", "h2"])
+        self.assertEqual(req.bootstrap_port, [1, 2])
+        self.assertEqual(req.bootstrap_room, [10, 20])
+        self.assertEqual(req.bootstrap_pair_key, ["k1", "k2"])
+
+
+class TestEmbeddingReqInputNormalization(CustomTestCase):
+    """Batch list length checks for EmbeddingReqInput normalization."""
+
+    def test_batch_list_fields_reject_invalid_length(self):
+        """rid (non-list or wrong length) and embed_overrides (wrong length) must raise."""
+        for kwargs in (
+            {"rid": "single"},
+            {"rid": ["only_one"]},
+            {"embed_overrides": [{}]},
+        ):
+            req = EmbeddingReqInput(text=["a", "b"], **kwargs)
+            with self.assertRaises(ValueError):
+                req.normalize_batch_and_arguments()
+
+        # Correctly sized lists still normalize.
+        req = EmbeddingReqInput(
+            text=["a", "b"], rid=["r1", "r2"], embed_overrides=[{}, {}]
+        )
+        req.normalize_batch_and_arguments()
+        self.assertEqual(req.rid, ["r1", "r2"])
 
 
 if __name__ == "__main__":

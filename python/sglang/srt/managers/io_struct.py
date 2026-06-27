@@ -476,6 +476,10 @@ class GenerateReqInput:
             if isinstance(self.lora_path, str):
                 self.lora_path = [self.lora_path] * num
             elif isinstance(self.lora_path, list):
+                if len(self.lora_path) != self.batch_size:
+                    raise ValueError(
+                        f"The length of lora_path ({len(self.lora_path)}) must match the batch size ({self.batch_size})."
+                    )
                 self.lora_path = self.lora_path * self.parallel_sample_num
             else:
                 raise ValueError("lora_path should be a list or a string.")
@@ -641,6 +645,10 @@ class GenerateReqInput:
         elif not isinstance(self.bootstrap_host, list):
             self.bootstrap_host = [self.bootstrap_host] * num
         elif isinstance(self.bootstrap_host, list):
+            if len(self.bootstrap_host) != self.batch_size:
+                raise ValueError(
+                    f"The length of bootstrap_host ({len(self.bootstrap_host)}) must match the batch size ({self.batch_size})."
+                )
             self.bootstrap_host = self.bootstrap_host * self.parallel_sample_num
 
         # Normalize bootstrap_port
@@ -649,6 +657,10 @@ class GenerateReqInput:
         elif not isinstance(self.bootstrap_port, list):
             self.bootstrap_port = [self.bootstrap_port] * num
         elif isinstance(self.bootstrap_port, list):
+            if len(self.bootstrap_port) != self.batch_size:
+                raise ValueError(
+                    f"The length of bootstrap_port ({len(self.bootstrap_port)}) must match the batch size ({self.batch_size})."
+                )
             self.bootstrap_port = self.bootstrap_port * self.parallel_sample_num
 
         # Normalize bootstrap_room
@@ -657,6 +669,10 @@ class GenerateReqInput:
         elif not isinstance(self.bootstrap_room, list):
             self.bootstrap_room = [self.bootstrap_room + i for i in range(num)]
         elif isinstance(self.bootstrap_room, list):
+            if len(self.bootstrap_room) != self.batch_size:
+                raise ValueError(
+                    f"The length of bootstrap_room ({len(self.bootstrap_room)}) must match the batch size ({self.batch_size})."
+                )
             self.bootstrap_room = self.bootstrap_room * self.parallel_sample_num
 
         # Normalize bootstrap_pair_key
@@ -665,6 +681,10 @@ class GenerateReqInput:
         elif not isinstance(self.bootstrap_pair_key, list):
             self.bootstrap_pair_key = [self.bootstrap_pair_key] * num
         elif isinstance(self.bootstrap_pair_key, list):
+            if len(self.bootstrap_pair_key) != self.batch_size:
+                raise ValueError(
+                    f"The length of bootstrap_pair_key ({len(self.bootstrap_pair_key)}) must match the batch size ({self.batch_size})."
+                )
             self.bootstrap_pair_key = self.bootstrap_pair_key * self.parallel_sample_num
 
         # Normalize decode_tp_size
@@ -1017,8 +1037,14 @@ class EmbeddingReqInput:
         else:
             if self.rid is None:
                 self.rid = [uuid.uuid4().hex for _ in range(self.batch_size)]
-            else:
-                assert isinstance(self.rid, list), "The rid should be a list."
+            elif not isinstance(self.rid, list):
+                raise ValueError(
+                    "The rid should be a list of strings for batch requests."
+                )
+            elif len(self.rid) != self.batch_size:
+                raise ValueError(
+                    f"The length of rid ({len(self.rid)}) must match the batch size ({self.batch_size})."
+                )
 
             if self.sampling_params is None:
                 self.sampling_params = [{}] * self.batch_size
@@ -1028,6 +1054,13 @@ class EmbeddingReqInput:
                 self.sampling_params[i]["max_new_tokens"] = 0
 
             self._normalize_lora_paths(self.batch_size)
+            if (
+                self.embed_overrides is not None
+                and len(self.embed_overrides) != self.batch_size
+            ):
+                raise ValueError(
+                    f"The length of embed_overrides ({len(self.embed_overrides)}) must match the batch size ({self.batch_size})."
+                )
 
         self._validate_rid_uniqueness()
 
