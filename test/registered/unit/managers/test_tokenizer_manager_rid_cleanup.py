@@ -30,6 +30,7 @@ from sglang.srt.observability.req_time_stats import APIServerReqTimeStats
 register_cpu_ci(est_time=15, suite="base-a-test-cpu")
 
 _NOT_FINISHED = object()  # Sentinel: request has not finished yet
+_HIDDEN_SIZE = 2048
 
 # ---------------------------------------------------------------------------
 # Per-request field defaults for BatchStrOutput construction.
@@ -107,6 +108,8 @@ def _make_tokenizer_manager() -> TokenizerManager:
     tm.server_args.weight_version = "1"
     tm.server_args.crash_dump_folder = ""
     tm.server_args.dp_size = 1
+    tm.model_config = MagicMock()
+    tm.model_config.hidden_size = _HIDDEN_SIZE
     tm.disaggregation_mode = "none"
     tm.rid_to_state = {}
     tm.enable_metrics = False
@@ -189,6 +192,25 @@ def _make_batch_str_output(rid: str, finished_reason=None) -> BatchStrOutput:
             kwargs[f.name] = [[]]
 
     return BatchStrOutput(**kwargs)
+
+
+class TestInputEmbedsShapeValidation(CustomTestCase):
+    def setUp(self):
+        self.tm = _make_tokenizer_manager()
+
+    def test_wrong_hidden_size_raises(self):
+        with self.assertRaises(ValueError):
+            self.tm._validate_input_embeds_shape([[1.0, 2.0, 3.0]])
+
+    def test_wrong_ndim_raises(self):
+        with self.assertRaises(ValueError):
+            self.tm._validate_input_embeds_shape([1.0, 2.0, 3.0])
+
+    def test_matching_hidden_size_2d_passes(self):
+        self.tm._validate_input_embeds_shape([[0.0] * _HIDDEN_SIZE])
+
+    def test_matching_hidden_size_3d_passes(self):
+        self.tm._validate_input_embeds_shape([[[0.0] * _HIDDEN_SIZE]])
 
 
 class TestRidToStateCleanupOnAbort(CustomTestCase):

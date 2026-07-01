@@ -809,6 +809,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     "Please add `--disable-radix-cache` when you launch the server "
                     "if you want to use input_embeds as inputs."
                 )
+            self._validate_input_embeds_shape(obj.input_embeds)
             input_embeds = obj.input_embeds
             input_ids = obj.input_ids
         elif obj.input_ids is not None:
@@ -1069,6 +1070,35 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         if obj.dimensions > self.model_config.hidden_size:
             raise ValueError(
                 f"Provided dimensions are greater than max embedding dimension: {self.model_config.hidden_size}"
+            )
+
+    def _validate_input_embeds_shape(
+        self, input_embeds: Union[List[List[float]], List[List[List[float]]]]
+    ) -> None:
+        """Validate input_embeds shape against model hidden size."""
+        def nested_shape(value: Any) -> List[int]:
+            if not isinstance(value, list):
+                return []
+            if not value:
+                return [0]
+
+            first_shape = nested_shape(value[0])
+            for item in value[1:]:
+                if nested_shape(item) != first_shape:
+                    raise ValueError("input_embeds must be a rectangular list.")
+            return [len(value)] + first_shape
+
+        shape = nested_shape(input_embeds)
+        if len(shape) not in (2, 3):
+            raise ValueError(
+                f"input_embeds must have shape [seq_len, hidden_size] or [batch_size, seq_len, hidden_size], "
+                f"got shape {shape}"
+            )
+
+        if shape[-1] != self.model_config.hidden_size:
+            raise ValueError(
+                f"input_embeds last dimension is {shape[-1]}, "
+                f"which does not match model hidden_size {self.model_config.hidden_size}."
             )
 
     def _validate_token_ids_logprob(self, obj: GenerateReqInput) -> None:
