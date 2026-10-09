@@ -9,11 +9,13 @@ import unittest
 from array import array
 from unittest.mock import patch
 
-from sglang.srt.managers.schedule_batch import Req
+import regex
+
+from sglang.srt.managers.schedule_batch import FINISH_ABORT, Req
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.test.ci.ci_register import register_cpu_ci
 
-register_cpu_ci(est_time=5, suite="base-a-test-cpu")
+register_cpu_ci(est_time=11, suite="base-a-test-cpu")
 
 # Token id -> decoded text; decode() concatenates. Distinct symbols so no
 # accidental cross-matches (10-39 are lowercase letters).
@@ -68,6 +70,18 @@ def _make_req(output_ids, stop=None, stop_regex=None, eos_token_ids=frozenset())
 
 
 class TestStopStrSpeculative(unittest.TestCase):
+    def test_stop_regex_match_errors_abort_only_the_request(self):
+        for error in (TimeoutError(), regex.error("invalid pattern"), RecursionError()):
+            with self.subTest(error=type(error).__name__):
+                req = _make_req([60], stop_regex=["b"])
+                with patch(
+                    "sglang.srt.managers.schedule_batch.match_stop_regex",
+                    side_effect=error,
+                ):
+                    req.update_finish_state()
+                self.assertIsInstance(req.finished_reason, FINISH_ABORT)
+                self.assertEqual(req.finished_reason.status_code, 400)
+
     def test_no_stop_does_not_finish(self):
         req = _make_req([10, 11, 12, 20, 21, 22, 23, 24], stop=["STOP"])
         req.update_finish_state(new_accepted_len=6)

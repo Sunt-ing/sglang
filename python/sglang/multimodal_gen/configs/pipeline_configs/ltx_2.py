@@ -178,6 +178,10 @@ class LTX2PipelineConfig(PipelineConfig):
     generator_device: str = "cpu"
     dit_config: LTX2Config = field(default_factory=LTX2Config)
 
+    # Distilled checkpoints are trained against one fixed sigma schedule rather
+    # than a step count. When set, it replaces the derived schedule.
+    default_sigmas: tuple[float, ...] | None = None
+
     # Model architecture
     in_channels: int = 128
     out_channels: int = 128
@@ -200,8 +204,8 @@ class LTX2PipelineConfig(PipelineConfig):
 
     def get_model_deployment_config(self) -> ModelDeploymentConfig:
         return ModelDeploymentConfig(
-            auto_disable_component_offload_min_available_memory_gb=70,
-            auto_disable_component_offload_components=("dit",),
+            keep_resident_min_available_gb=70,
+            keep_resident_components=("dit",),
             auto_cfg_parallel_degree_by_num_gpus=((4, 1), (8, 1)),
         )
 
@@ -309,6 +313,9 @@ class LTX2PipelineConfig(PipelineConfig):
             self.patch_size,
         )
         latents = latents.permute(0, 2, 4, 6, 1, 3, 5, 7).flatten(4, 7).flatten(1, 3)
+        # Deliberately left non-contiguous: both flattens are views, so this
+        # keeps the permuted strides. Normalising here would change which GEMM
+        # kernel runs and move bf16 output. The fp8 path makes its own copy.
         return latents
 
     def _infer_video_latent_frames_and_tokens_per_frame(
@@ -387,6 +394,7 @@ class LTX2PipelineConfig(PipelineConfig):
 
         # Pad whole frames so `latent_frames` is divisible by `sp_world_size`.
         pad_frames = (sp_world_size - (latent_frames % sp_world_size)) % sp_world_size
+        batch.sp_video_has_padding = pad_frames > 0
         if pad_frames:
             pad_tokens = int(pad_frames) * int(tokens_per_frame)
             pad = torch.zeros(
@@ -436,6 +444,7 @@ class LTX2PipelineConfig(PipelineConfig):
         batch.sp_audio_orig_num_frames = int(seq_len)
 
         pad_frames = (sp_world_size - (seq_len % sp_world_size)) % sp_world_size
+        batch.sp_audio_has_padding = pad_frames > 0
         if pad_frames:
             pad = torch.zeros(
                 (audio_latents.shape[0], pad_frames, audio_latents.shape[2]),
@@ -717,7 +726,39 @@ class LTX2PipelineConfig(PipelineConfig):
 class LTX23PipelineConfig(LTX2PipelineConfig):
     """Configuration overrides for LTX-2.3."""
 
+    # original-mode lora swaps invalidate post-warmup timing calibration
+    supports_auto_residency: bool = False
 
-@dataclasses.dataclass
-class LTX2I2VPipelineConfig(LTX2PipelineConfig):
-    task_type: ModelTaskType = ModelTaskType.TI2V
+
+def register():
+    from sglang.multimodal_gen.configs.sample.ltx_2 import (
+        LTX2SamplingParams,
+        LTX23HQSamplingParams,
+        LTX23SamplingParams,
+    )
+    from sglang.multimodal_gen.registry import register_configs
+
+    register_configs(
+        sampling_param_cls=LTX2SamplingParams,
+        pipeline_config_cls=LTX2PipelineConfig,
+        hf_model_paths=["Lightricks/LTX-2"],
+        model_detectors=[
+            lambda path: "ltx" in path.lower() and "video" in path.lower(),
+            lambda path: (
+                "ltx-2" in path.lower()
+                and "ltx-2.3" not in path.lower()
+                and "ltx-2.5" not in path.lower()
+            ),
+        ],
+    )
+    register_configs(
+        sampling_param_cls=LTX23SamplingParams,
+        pipeline_config_cls=LTX23PipelineConfig,
+        hf_model_paths=["Lightricks/LTX-2.3"],
+        model_detectors=[
+            lambda path: "ltx-2.3" in path.lower(),
+        ],
+        pipeline_config_registry_entries={
+            "LTX2TwoStageHQPipeline": (LTX2PipelineConfig, LTX23HQSamplingParams),
+        },
+    )
